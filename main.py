@@ -1,17 +1,21 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 import httpx
 from bs4 import BeautifulSoup
 import uvicorn
+import os
 
 # FastAPI ilovasini yaratish
 app = FastAPI(
     title="Obhavo.uz API",
     description="Obhavo.uz saytidan ob-havo ma'lumotlarini parsing qiluvchi norasmiy API",
-    version="1.0.0"
+    version="1.1.0"
 )
 
-# CORS sozlamalari (Istalgan front-end dan so'rov yuborishga ruxsat berish uchun)
+# CORS sozlamalari
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,28 +24,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Templates sozlamalari
+templates = Jinja2Templates(directory="templates")
+
 async def fetch_weather_data(city: str) -> dict:
     """
     Berilgan shahar uchun obhavo.uz saytidan ma'lumotlarni yuklab olish va parsing qilish.
     """
     url = f"https://obhavo.uz/{city}"
     
-    # Asinxron so'rov yuborish
     async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        
-        # Agar sahifa topilmasa (masalan noto'g'ri shahar nomi)
-        if response.status_code != 200:
-            raise HTTPException(status_code=404, detail="Shahar topilmadi. Iltimos, shahar nomini to'g'ri kiriting (masalan: tashkent, navoi, samarkand).")
+        try:
+            response = await client.get(url, follow_redirects=True)
+            if response.status_code != 200:
+                raise HTTPException(status_code=404, detail="Shahar topilmadi.")
+        except Exception:
+            raise HTTPException(status_code=500, detail="Tizimga ulanishda xatolik.")
             
-    # BeautifulSoup yordamida HTML ni tahlil qilish
     soup = BeautifulSoup(response.text, 'html.parser')
     
-    # Xavfsiz matn ajratib olish uchun yordamchi funksiya
     def safe_text(element):
         return element.text.strip() if element else ""
 
-    # Ajratilgan ro'yxatlardan (namlik, shamol) qiymatni xavfsiz olish
     def extract_detail(elements, index):
         if len(elements) > index:
             parts = elements[index].text.split(': ')
@@ -49,16 +53,12 @@ async def fetch_weather_data(city: str) -> dict:
         return ""
         
     try:
-        # 1. Asosiy ma'lumotlar
         city_name = safe_text(soup.find('h2'))
-        
-        # Agar shahar topilmasa va sahifa boshqa joyga yo'naltirilgan bo'lsa
         if not city_name:
-            raise HTTPException(status_code=404, detail="Kiritilgan shahar bo'yicha ma'lumot topilmadi.")
+            raise HTTPException(status_code=404, detail="Ma'lumot topilmadi.")
             
         current_day = safe_text(soup.find('div', class_='current-day'))
         
-        # 2. Bugungi harorat
         current_forecast = soup.find('div', class_='current-forecast')
         temp_day = ""
         temp_night = ""
@@ -70,19 +70,16 @@ async def fetch_weather_data(city: str) -> dict:
                 
         description = safe_text(soup.find('div', class_='current-forecast-desc'))
         
-        # 3. Qo'shimcha tafsilotlar (Namlik, shamol, bosim)
         details_col1 = soup.select('.current-forecast-details .col-1 p')
         humidity = extract_detail(details_col1, 0)
         wind = extract_detail(details_col1, 1)
         pressure = extract_detail(details_col1, 2)
         
-        # Quyosh va oy ma'lumotlari
         details_col2 = soup.select('.current-forecast-details .col-2 p')
         moon = extract_detail(details_col2, 0)
         sunrise = extract_detail(details_col2, 1)
         sunset = extract_detail(details_col2, 2)
         
-        # 4. Kun qismlari bo'yicha harorat (Tong, Kun, Oqshom)
         time_of_day_data = []
         times_div = soup.find('div', class_='current-forecast-day')
         if times_div:
@@ -90,31 +87,18 @@ async def fetch_weather_data(city: str) -> dict:
             for col in cols:
                 time_name = safe_text(col.find('p', class_='time-of-day'))
                 time_temp = safe_text(col.find('p', class_='forecast'))
-                time_of_day_data.append({
-                    "vaqt": time_name,
-                    "harorat": time_temp
-                })
+                time_of_day_data.append({"vaqt": time_name, "harorat": time_temp})
                 
-        # 5. Haftalik ma'lumot (Kunlik)
         weekly_forecast = []
         table_rows = soup.select('.weather-table tbody tr')
-        
-        # Birinchi qator <th> sarlavhalar, shuning uchun uni tashlab o'tamiz (index 1 dan boshlaymiz)
         for row in table_rows[1:]:
-            # Kun nomi va sanasi (masalan: "Ertaga 3 aprel")
             day_cell = row.find('td', class_='weather-row-day')
             day_full_text = day_cell.get_text(" ", strip=True) if day_cell else ""
-            
-            # Harorat
             forecast_cell = row.find('td', class_='weather-row-forecast')
             day_t = safe_text(forecast_cell.find('span', class_='forecast-day')) if forecast_cell else ""
             night_t = safe_text(forecast_cell.find('span', class_='forecast-night')) if forecast_cell else ""
-            
-            # Tavsif
             desc_cell = row.find('td', class_='weather-row-desc')
             day_desc = safe_text(desc_cell)
-            
-            # Yog'ingarchilik ehtimoli
             pop_cell = row.find('td', class_='weather-row-pop')
             precipitation = safe_text(pop_cell)
             
@@ -126,7 +110,6 @@ async def fetch_weather_data(city: str) -> dict:
                 "yogingarchilik": precipitation
             })
             
-        # Barcha ma'lumotlarni yig'ib qaytarish
         return {
             "shahar": city_name,
             "sana": current_day,
@@ -144,30 +127,15 @@ async def fetch_weather_data(city: str) -> dict:
             "kun_qismlari": time_of_day_data,
             "haftalik_obhavo": weekly_forecast
         }
-        
     except Exception as e:
-        # Sahifa tuzilishi o'zgargan bo'lsa yoki boshqa xatolik yuz bersa
-        raise HTTPException(status_code=500, detail=f"Ma'lumotlarni o'qishda xatolik yuz berdi: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Xatolik: {str(e)}")
 
-# Asosiy sahifa - API qanday ishlashini ko'rsatadi
-@app.get("/", tags=["Asosiy"])
-async def root():
-    return {
-        "xabar": "Obhavo.uz API ga xush kelibsiz!",
-        "qollanma": "Ob-havo ma'lumotlarini olish uchun /api/weather/{shahar_nomi} manziliga murojaat qiling.",
-        "misollar": [
-            "/api/weather/tashkent",
-            "/api/weather/navoi",
-            "/api/weather/samarkand"
-        ]
-    }
+# Frontend uchun endpoint
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
-# Ma'lum shahar uchun ob-havoni olish endpointi
-@app.get("/api/weather/{city}", tags=["Ob-havo"])
+# API endpoint
+@app.get("/api/weather/{city}")
 async def get_weather(city: str):
-    """
-    Kiritilgan shahar nomi bo'yicha joriy va haftalik ob-havo ma'lumotlarini qaytaradi.
-    Shahar nomi lotin harflarida va kichik yozilishi kerak (masalan: andijan, bukhara, navoi).
-    """
-    data = await fetch_weather_data(city.lower())
-    return data
+    return await fetch_weather_data(city.lower())
