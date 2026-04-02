@@ -37,28 +37,50 @@ async def fetch_weather_data(city: str) -> dict:
     # BeautifulSoup yordamida HTML ni tahlil qilish
     soup = BeautifulSoup(response.text, 'html.parser')
     
+    # Xavfsiz matn ajratib olish uchun yordamchi funksiya
+    def safe_text(element):
+        return element.text.strip() if element else ""
+
+    # Ajratilgan ro'yxatlardan (namlik, shamol) qiymatni xavfsiz olish
+    def extract_detail(elements, index):
+        if len(elements) > index:
+            parts = elements[index].text.split(': ')
+            return parts[1].strip() if len(parts) > 1 else elements[index].text.strip()
+        return ""
+        
     try:
         # 1. Asosiy ma'lumotlar
-        city_name = soup.find('h2').text.strip()
-        current_day = soup.find('div', class_='current-day').text.strip()
+        city_name = safe_text(soup.find('h2'))
+        
+        # Agar shahar topilmasa va sahifa boshqa joyga yo'naltirilgan bo'lsa
+        if not city_name:
+            raise HTTPException(status_code=404, detail="Kiritilgan shahar bo'yicha ma'lumot topilmadi.")
+            
+        current_day = safe_text(soup.find('div', class_='current-day'))
         
         # 2. Bugungi harorat
         current_forecast = soup.find('div', class_='current-forecast')
-        temp_day = current_forecast.find('strong').text.strip()
-        temp_night = current_forecast.find_all('span')[2].text.strip()
-        description = soup.find('div', class_='current-forecast-desc').text.strip()
+        temp_day = ""
+        temp_night = ""
+        if current_forecast:
+            temp_day = safe_text(current_forecast.find('strong'))
+            spans = current_forecast.find_all('span')
+            if len(spans) > 2:
+                temp_night = safe_text(spans[2])
+                
+        description = safe_text(soup.find('div', class_='current-forecast-desc'))
         
         # 3. Qo'shimcha tafsilotlar (Namlik, shamol, bosim)
         details_col1 = soup.select('.current-forecast-details .col-1 p')
-        humidity = details_col1[0].text.split(': ')[1] if len(details_col1) > 0 else ""
-        wind = details_col1[1].text.split(': ')[1] if len(details_col1) > 1 else ""
-        pressure = details_col1[2].text.split(': ')[1] if len(details_col1) > 2 else ""
+        humidity = extract_detail(details_col1, 0)
+        wind = extract_detail(details_col1, 1)
+        pressure = extract_detail(details_col1, 2)
         
         # Quyosh va oy ma'lumotlari
         details_col2 = soup.select('.current-forecast-details .col-2 p')
-        moon = details_col2[0].text.split(': ')[1] if len(details_col2) > 0 else ""
-        sunrise = details_col2[1].text.split(': ')[1] if len(details_col2) > 1 else ""
-        sunset = details_col2[2].text.split(': ')[1] if len(details_col2) > 2 else ""
+        moon = extract_detail(details_col2, 0)
+        sunrise = extract_detail(details_col2, 1)
+        sunset = extract_detail(details_col2, 2)
         
         # 4. Kun qismlari bo'yicha harorat (Tong, Kun, Oqshom)
         time_of_day_data = []
@@ -66,8 +88,8 @@ async def fetch_weather_data(city: str) -> dict:
         if times_div:
             cols = times_div.find_all('div', recursive=False)
             for col in cols:
-                time_name = col.find('p', class_='time-of-day').text.strip()
-                time_temp = col.find('p', class_='forecast').text.strip()
+                time_name = safe_text(col.find('p', class_='time-of-day'))
+                time_temp = safe_text(col.find('p', class_='forecast'))
                 time_of_day_data.append({
                     "vaqt": time_name,
                     "harorat": time_temp
@@ -85,16 +107,16 @@ async def fetch_weather_data(city: str) -> dict:
             
             # Harorat
             forecast_cell = row.find('td', class_='weather-row-forecast')
-            day_t = forecast_cell.find('span', class_='forecast-day').text.strip() if forecast_cell else ""
-            night_t = forecast_cell.find('span', class_='forecast-night').text.strip() if forecast_cell else ""
+            day_t = safe_text(forecast_cell.find('span', class_='forecast-day')) if forecast_cell else ""
+            night_t = safe_text(forecast_cell.find('span', class_='forecast-night')) if forecast_cell else ""
             
             # Tavsif
             desc_cell = row.find('td', class_='weather-row-desc')
-            day_desc = desc_cell.text.strip() if desc_cell else ""
+            day_desc = safe_text(desc_cell)
             
             # Yog'ingarchilik ehtimoli
             pop_cell = row.find('td', class_='weather-row-pop')
-            precipitation = pop_cell.text.strip() if pop_cell else ""
+            precipitation = safe_text(pop_cell)
             
             weekly_forecast.append({
                 "sana": day_full_text,
