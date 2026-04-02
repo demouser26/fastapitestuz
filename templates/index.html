@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Udar Ob-havo | Obhavo.uz API</title>
+    <!-- Fredoka Shrifti -->
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Font Awesome Ikonkalar -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Fredoka', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #fff;
+        }
+        .glass {
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 24px;
+        }
+        .weather-card:hover {
+            transform: translateY(-5px);
+            transition: all 0.3s ease;
+        }
+        .loader {
+            border-top-color: #fff;
+            animation: spinner 1.5s linear infinite;
+        }
+        @keyframes spinner {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        input::placeholder { color: rgba(255,255,255,0.7); }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+    <div class="max-w-4xl mx-auto">
+        <!-- Qidiruv Bo'limi -->
+        <div class="glass p-6 mb-8 flex flex-col md:flex-row gap-4 items-center">
+            <h1 class="text-3xl font-bold tracking-tight mb-4 md:mb-0">🌦️ Udar Ob-havo</h1>
+            <div class="relative flex-grow w-full">
+                <input type="text" id="cityInput" placeholder="Shaharni kiriting (masalan: navoi)..." 
+                       class="w-full bg-white/20 border-0 rounded-xl py-4 px-6 text-white focus:ring-2 focus:ring-white/50 outline-none text-lg">
+                <button onclick="getWeather()" class="absolute right-2 top-2 bottom-2 bg-white text-indigo-700 px-6 rounded-lg font-bold hover:bg-opacity-90 transition-all">
+                    Izlash
+                </button>
+            </div>
+        </div>
+
+        <!-- Yuklanish indikatori -->
+        <div id="loading" class="hidden flex justify-center py-10">
+            <div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12"></div>
+        </div>
+
+        <!-- Natijalar -->
+        <div id="weatherContent" class="hidden space-y-8">
+            <!-- Asosiy bugungi ob-havo -->
+            <div class="glass p-8 text-center md:text-left grid md:grid-cols-2 gap-8 items-center">
+                <div>
+                    <h2 id="cityName" class="text-5xl font-bold mb-2">Toshkent</h2>
+                    <p id="dateStr" class="text-xl opacity-80 mb-6">Payshanba, 3-aprel</p>
+                    <div class="flex items-center justify-center md:justify-start gap-4">
+                        <span id="mainTemp" class="text-800 text-8xl font-bold">+25°</span>
+                        <div class="text-left">
+                            <p id="nightTemp" class="text-2xl opacity-70">Kechasi: +12°</p>
+                            <p id="weatherDesc" class="text-2xl font-medium">Ochiq havo</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-white/10 p-4 rounded-2xl">
+                        <i class="fas fa-droplet mb-2 opacity-70"></i>
+                        <p class="text-sm opacity-70">Namlik</p>
+                        <p id="humidity" class="text-xl font-bold">45%</p>
+                    </div>
+                    <div class="bg-white/10 p-4 rounded-2xl">
+                        <i class="fas fa-wind mb-2 opacity-70"></i>
+                        <p class="text-sm opacity-70">Shamol</p>
+                        <p id="wind" class="text-xl font-bold">5 m/s</p>
+                    </div>
+                    <div class="bg-white/10 p-4 rounded-2xl">
+                        <i class="fas fa-sun mb-2 opacity-70"></i>
+                        <p class="text-sm opacity-70">Quyosh chiqishi</p>
+                        <p id="sunrise" class="text-xl font-bold">06:02</p>
+                    </div>
+                    <div class="bg-white/10 p-4 rounded-2xl">
+                        <i class="fas fa-moon mb-2 opacity-70"></i>
+                        <p class="text-sm opacity-70">Oy</p>
+                        <p id="moon" class="text-xl font-bold">Tug'ilgan</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Haftalik -->
+            <h3 class="text-2xl font-bold px-2">Keyingi kunlar</h3>
+            <div id="weeklyContainer" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
+                <!-- JS orqali to'ldiriladi -->
+            </div>
+        </div>
+
+        <div id="errorMessage" class="hidden glass p-8 text-center text-red-200">
+            <i class="fas fa-circle-exclamation text-4xl mb-4"></i>
+            <p id="errorText">Xatolik yuz berdi!</p>
+        </div>
+    </div>
+
+    <script>
+        async function getWeather() {
+            const city = document.getElementById('cityInput').value || 'tashkent';
+            const content = document.getElementById('weatherContent');
+            const loader = document.getElementById('loading');
+            const error = document.getElementById('errorMessage');
+
+            content.classList.add('hidden');
+            error.classList.add('hidden');
+            loader.classList.remove('hidden');
+
+            try {
+                const response = await fetch(`/api/weather/${city}`);
+                const data = await response.json();
+
+                if (response.status !== 200) throw new Error(data.detail || 'Nomaʼlum xatolik');
+
+                // Ma'lumotlarni joylash
+                document.getElementById('cityName').innerText = data.shahar;
+                document.getElementById('dateStr').innerText = data.sana;
+                document.getElementById('mainTemp').innerText = data.bugungi_obhavo.harorat_kunduzi;
+                document.getElementById('nightTemp').innerText = 'Kechasi: ' + data.bugungi_obhavo.harorat_kechasi;
+                document.getElementById('weatherDesc').innerText = data.bugungi_obhavo.tavsif;
+                document.getElementById('humidity').innerText = data.bugungi_obhavo.namlik;
+                document.getElementById('wind').innerText = data.bugungi_obhavo.shamol;
+                document.getElementById('sunrise').innerText = data.bugungi_obhavo.quyosh_chiqishi;
+                document.getElementById('moon').innerText = data.bugungi_obhavo.oy;
+
+                // Haftalikni to'ldirish
+                const weeklyContainer = document.getElementById('weeklyContainer');
+                weeklyContainer.innerHTML = '';
+                
+                data.haftalik_obhavo.forEach(day => {
+                    const card = `
+                        <div class="glass p-4 text-center weather-card">
+                            <p class="font-bold text-sm mb-1">${day.sana.split(' ')[0]}</p>
+                            <p class="text-xs opacity-70 mb-3">${day.sana.split(' ').slice(1).join(' ')}</p>
+                            <div class="text-2xl font-bold mb-1">${day.harorat_kunduzi}</div>
+                            <div class="text-sm opacity-60 mb-2">${day.harorat_kechasi}</div>
+                            <p class="text-[10px] leading-tight font-medium h-8 flex items-center justify-center">${day.tavsif}</p>
+                        </div>
+                    `;
+                    weeklyContainer.innerHTML += card;
+                });
+
+                content.classList.remove('hidden');
+            } catch (err) {
+                document.getElementById('errorText').innerText = err.message;
+                error.classList.remove('hidden');
+            } finally {
+                loader.classList.add('hidden');
+            }
+        }
+
+        // Enter bosilganda qidirish
+        document.getElementById('cityInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') getWeather();
+        });
+
+        // Sayt yuklanganda avtomatik Toshkentni chiqarish
+        window.onload = getWeather;
+    </script>
+</body>
+</html>
